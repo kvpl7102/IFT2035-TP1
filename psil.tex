@@ -1,0 +1,494 @@
+\documentclass{article}
+
+\usepackage[french]{babel}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsfonts}            %For \leadsto
+\usepackage{amsmath}             %For \text
+\usepackage{fancybox}            %For \ovalbox
+
+\title{Travail pratique \#1}
+\author{IFT-2035}
+
+\begin{document}
+
+\maketitle
+
+{\centering \ovalbox{\large ¡¡ Dû le 3 juin à 23h59 !!} \\}
+
+\newcommand \mML {\ensuremath\mu\textsl{ML}}
+\newcommand \kw [1] {\textsf{#1}}
+\newcommand \id [1] {\textsl{#1}}
+\newcommand \punc [1] {\kw{`#1'}}
+\newcommand \str [1] {\texttt{"#1"}}
+\newenvironment{outitemize}{
+  \begin{itemize}
+  \let \origitem \item \def \item {\origitem[]\hspace{-18pt}}
+}{
+  \end{itemize}
+}
+\newcommand \MAlign [2][t] {
+  \begin{array}[#1]{@{}l}
+    #2
+  \end{array}}
+
+\section{Survol}
+
+Ce TP vise à améliorer la compréhension des langages fonctionnels en
+utilisant un langage de programmation fonctionnel (Haskell) et en écrivant
+une partie d'un interpréteur d'un langage de programmation fonctionnel (en
+l'occurrence une sorte de Lisp).  Les étapes de ce travail sont les suivantes:
+\begin{enumerate}
+\item Parfaire sa connaissance de Haskell.
+\item Lire et comprendre cette donnée.  Cela prendra probablement une partie
+  importante du temps total.
+\item Lire, trouver, et comprendre les parties importantes du code fourni.
+\item Compléter le code fourni.
+\item Écrire un rapport.  Il doit décrire \textbf{votre} expérience pendant
+  les points précédents: problèmes rencontrés, surprises, choix que vous
+  avez dû faire, options que vous avez sciemment rejetées, etc...  Le
+  rapport ne doit pas excéder 5 pages.
+\end{enumerate}
+
+Ce travail est à faire en groupes de 2 étudiants.  Le rapport, au format
+\LaTeX\ exclusivement (compilable sur \texttt{ens.iro}), et le code sont
+à remettre par remise électronique avant la date indiquée.  Aucun retard ne
+sera accepté.  Indiquez clairement votre nom au début de chaque fichier.
+
+Si un étudiant préfère travailler seul, libre à lui, mais l'évaluation de
+son travail n'en tiendra pas compte. %% Si un étudiant ne trouve pas de
+%% partenaire, même après en avoir cherché dans le forum de \emph{discussions},
+%% il doit me contacter au plus tard le 9 octobre \textbf{avant} le cours.
+Des groupes de 3 ou plus sont \textbf{exclus}.
+
+\newpage
+\section{Psil: Une sorte de Lisp}
+
+\begin{figure}
+  \begin{displaymath}
+    \begin{array}{r@{~}r@{~}l@{~~}l}
+      \tau &::=& \kw{Int} & \text{Type des nombres entiers} \\
+      &\mid& (\tau_1~...~\tau_n \to \tau) & \text{Type d'une fonction}
+       \medskip \\
+      e &::=& n & \text{Un entier signé en décimal} \\
+      &\mid& x & \text{Référence à une variable}  \\
+      &\mid& (e_0~e_1~...~e_n) &
+           \text{Un appel de fonction (\emph{curried})} \\
+      &\mid& (\kw{fun}~x~e) & \text{Une fonction d'un argument} \\
+      &\mid& (\kw{let}~((x~e_1))~e_2) &
+           \text{Ajout d'une variable locale} \\
+      &\mid& ({\kw{:}}~e~\tau) & \text{Annotation de type} \\
+      &\mid& + \mid - \mid * \mid / \mid \kw{if0} & 
+           \text{Opérations arithmétiques}
+       \medskip \\
+      d &::=& (\kw{dec}~x~\tau) & \text{Déclaration de variable} \\
+      &\mid& (\kw{def}~x~e) & \text{Définition de variable}
+      \medskip \\
+      p &::=& d_1~...~d_n & \text{Programme} \\
+      
+%%           \medskip \\
+%%       d &::=& (x~e) & %% \mid ((x~x_1~...~x_n)~e)
+%%           \text{Déclaration de variable} \\ %% et de fonction
+%%       &\mid& (x~\tau~e) & \text{Déclaration de variable avec son type} \\
+%%       &\mid& (x~(x_1~\tau_1)~...~(x_n~\tau_n)~\tau~e) &
+%%            \text{Déclaration de fonction avec son type}
+    \end{array}
+  \end{displaymath}
+  \caption{Syntaxe de Psil}
+  \label{fig:syntaxe}
+\end{figure}
+
+Vous allez travailler sur l'implantation d'un langage fonctionnel dont la
+syntaxe est inspirée du langage Lisp.  La syntaxe de ce langage est décrite
+à la Figure~\ref{fig:syntaxe}.
+
+À remarquer qu'avec la syntaxe de style Lisp, les parenthèses sont
+généralement significatives.  Mais contrairement à la tradition de Lisp, le
+type des fonctions $(\tau_1 \to \tau_2)$ utilise une syntaxe infixe plutôt
+que préfixe.
+
+La forme \kw{let} est utilisée pour donner un nom à une définition
+locale.  Elle n'autorise pas la récursion.  Exemple:
+\begin{displaymath}
+  \MAlign[c]{(\kw{let}~(\MAlign{(x~2))} \\\;\; (+~x~3))} \;\;\;\;\leadsto^*\;\;\;\;5
+\end{displaymath}
+Un programme Psil est une suite de déclarations.  Les déclarations ont
+généralement la forme $(\kw{def}~x~e)$ qui défini une nouvelle variable
+globale $x$, mais une telle définition peut aussi être précédée comme en
+Haskell d'une déclaration du type de $x$ avec $(\kw{dec}~x~\tau)$.
+Cette déclaration est indispensable si $x$ est définie récursivement (i.e.~a
+besoin de faire référence à elle-même):
+\begin{displaymath}
+  \MAlign{
+    (\kw{dec}~\id{infloop}~(\kw{Int}~\to~\kw{Int})) \\
+    (\kw{def}~\id{infloop}~(\kw{fun}~x~(\id{infloop}~(+~x~1))))
+  }
+\end{displaymath}
+
+
+\subsection{Sucre syntaxique}
+\label{sec:sucre}
+
+Les fonctions n'ont qu'un seul argument: la syntaxe offre la possibilité de
+passer plusieurs arguments, mais ces arguments sont passés par
+\emph{currying}.  Plus précisément, les équivalences suivantes sont vraies
+pour les expressions:
+\begin{displaymath}
+  \begin{array}{r@{\;\;\;\;\Longleftrightarrow\;\;\;\;}l}
+    (e_0~e_1~e_2~...~e_n) & (..((e_0~e_1)~e_2)...~e_n) \\
+%%     (\kw{fn}~(x_1~...~x_n)~e) &
+%%         (\kw{fn}~(x_1)~...~(\kw{fn}~(x_n)~e)..) \\
+    (\tau_1~...~\tau_n \to \tau) & (\tau_1\to ... (\tau_n\to\tau)..)
+  \end{array}
+\end{displaymath}
+%% De plus, la syntaxe d'une déclaration de fonction est elle aussi du sucre
+%% syntaxique, et elle est régie par l'équivalence suivante pour les déclarations:
+%% \begin{displaymath}
+%%   \begin{array}{r@{\;\;\;\;\Longleftrightarrow\;\;\;\;}l}
+%%     ((x~(x_1~\tau_1)~...~(x_n~\tau_n))~\tau~e) &
+%%         (x~(\tau_1~...~\tau_n\to\tau)~(\kw{fn}~(x_1~...~x_n)~e))
+%%   \end{array}
+%% \end{displaymath}
+
+Vous allez utilisez ces équivalences dans la première partie du code qui va
+convertir le code d'entrée du format générique \kw{Sexp} au format
+``Lambda'', un format beaucoup plus pratique pour implanter la suite,
+i.e. la vérification des types et l'évaluation.
+
+\subsection{Sémantique statique}
+
+\newcommand \CheckKind [1] {\vdash #1}
+\newcommand \CheckType [2][\Gamma] {#1 \vdash #2 \Leftarrow }
+\newcommand \InferType [2][\Gamma] {#1 \vdash #2 \Rightarrow }
+\newcommand \BothType [2][\Gamma] {#1 \vdash #2 ~:~}
+\newcommand \Axiom [2] { \mbox{}\hspace{10pt}\nolinebreak\ensuremath{\displaystyle
+    \frac{#1}{#2}}\nolinebreak\hspace{10pt}\mbox{} \medskip}
+\newcommand \HA {\hspace{15pt}}
+\renewcommand \: {\!:\!}
+
+\begin{figure}
+  \begin{minipage}{\columnwidth}
+    \noindent \centering
+
+    \Axiom{}{\InferType{n}{\kw{Int}}}
+    \Axiom{\Gamma(x) = \tau}{\InferType{x}{\tau}}
+    \Axiom{\CheckType{e}{\tau}}
+          {\InferType{(\kw{:}~e~\tau)}{\tau}}
+    \Axiom{\InferType{e}{\tau}}
+          {\CheckType{e}{\tau}}
+    \Axiom{\InferType{e_1}{(\tau_1\to\tau_2)}
+           \HA
+           \CheckType{e_2}{\tau_1}}
+          {\InferType{(e_1~e_2)}{\tau_2}}
+    \Axiom{\CheckType[\Gamma,x\:\tau_1]{e}{\tau_2}}
+          {\CheckType{(\kw{fun}~x~e)}{(\tau_1\to\tau_2)}}
+    \Axiom{\InferType{e_1}{\tau_1} \HA \InferType[\Gamma,x\:\tau_1]{e_2}{\tau_2}}
+          {\InferType{(\kw{let}~((x~e_1))~e_2)}{\tau_2}}
+    \mbox{}
+  \end{minipage}
+  \caption{Règles de typage}
+  \label{fig:typing}
+\end{figure}
+
+Une des différences les plus notoires entre Lisp et Psil est que Psil est
+typé statiquement.  Les règles de typage (voir Figure~\ref{fig:typing})
+utilisent deux jugements $\CheckType{e}{\tau}$ et $\InferType{e}{\tau}$ qui
+disent que l'expression $e$ est typée correctement et a type $\tau$.  Dans ces
+règles, $\Gamma$ représente le contexte de typage, c'est à dire qu'il contient le
+type de toutes les variables auxquelles $e$ peut faire référence.
+
+Ce genre de typage est dit ``bidirectionnel'': $\CheckType{e}{\tau}$ est
+utilisé lorsqu'on connaît déjà le type attendu de $e$ et qu'on veut donc
+vérifier que $e$ a effectivement ce type, et on utilise $\InferType{e}{\tau}$
+lorsqu'au contraire on ne connaît pas à priori le type de $e$ et donc la
+règle est sensée ``synthétiser'' le type $\tau$ en analysant $e$.
+
+Cette approche permet de réduire un peu la quantité d'annotations de types
+pour le programmeur Psil, en profitant de manière ``opportuniste'' de
+l'information de typage disponible, tout en étant beaucoup plus simple
+à implanter qu'une inférence de types comme celle de Haskell.
+
+Il manque les règles de typage des opérations arithmétiques, car elles sont
+traitées simplement comme des ``variables prédéfinies'' qui
+sont donc incluse dans le contexte $\Gamma$ initial.
+
+La deuxième partie du travail est d'implanter la vérification de types, donc
+de transformer ces règles en un morceau de code Haskell.  Un détail
+important pour cela est que le but fondamental de la vérification de types
+n'est pas de trouver le type d'une expression mais plutôt de trouver
+d'éventuelles erreurs de typage, donc il est important de \emph{tout} vérifier.
+
+\subsection{Sémantique dynamique}
+
+Les valeurs manipulées à l'exécution par notre langage sont seulement les
+entiers et les fonctions.
+
+Les règles de réductions primitives ($\beta$) sont les suivantes:
+\begin{displaymath}
+  \begin{array}{r@{\;\;\;\leadsto\;\;\;}l}
+    ((\kw{fun}~x~e)~v) & e[v/x] \\
+    (\kw{let}~((x~v))~e) & e[v/x]
+  \end{array}
+\end{displaymath}
+où la notation $e[v/x]$ représente l'expression $e$ dans un
+environnement où la variable $x$ prend la valeur $v$.  L'usage de $v$ dans
+la règle ci-dessus indique qu'il s'agit bien d'une valeur plutôt que d'une
+expression non encore évaluée.
+%% 
+En plus de la règle ci-dessus, les différentes primitives se
+comportent comme suit:
+\begin{displaymath}
+  \begin{array}{r@{\;\;\;\leadsto\;\;\;}l}
+    (+~n_1~n_2) & n_1 + n_2 \\
+    (-~n_1~n_2) & n_1 - n_2 \\
+    (*~n_1~n_2) & n_1 \times n_2 \\
+    (/~n_1~n_2) & n_1 \div n_2 \\
+    (\kw{if0}~n_1~n_2~n_3) & \left\{
+    \begin{array}{ll}
+      n_2 & \text{si $n_1 = 0$} \\
+      n_3 & \text{sinon}
+    \end{array}\right.
+    \\
+  \end{array}
+\end{displaymath}
+%%
+Donc il s'agit d'une variante du $\lambda$-calcul, sans grande surprise.
+La portée est statique et l'ordre d'évaluation est présumé être ``par
+valeur'', mais vu que le langage est pur, la différence n'est pas très
+importante pour ce travail.
+
+\section{Implantation}
+
+L'implantation du langage fonctionne en plusieurs phases:
+\begin{enumerate}
+\item Une première phase d'analyse lexicale et syntaxique transforme le code
+  source en une représentation décrite ci-dessous, appelée \id{Sexp} (pour
+  ``syntactic expression'') dans le code.  C'est une sorte de
+  proto-ASA (arbre de syntaxe abstraite).  Cette partie vous est offerte.
+\item Une deuxieme phase, appelée élaboraion, termine l'analyse syntaxique et
+  commence la compilation, en transformant cet arbre en un vrai arbre de
+  syntaxe abstraite dans la représentation appellée ``Lambda'' (ou \id{Lexp}
+  pour ``lambda expression'') dans le code.  Comme mentionné, cette phase
+  commence déjà la compilation vu que le langage \id{Lexp} n'est pas
+  identique à notre langage source.  En plus de terminer l'analyse
+  syntaxique, cette phase élimine le sucre syntaxique (i.e.~applique les
+  règles de la forme $...\Longleftrightarrow...$).
+\item Une troisième phase, appelée \id{check/synth}, vérifie que le code est
+  correctement typé et en trouve son type.
+\item Finalement, une fonction \id{eval} procède à l'évaluation des
+  expressions par interprétation, et \id{process\_decl} l'utilise pour
+  évaluer toutes les déclarations du programme.
+\end{enumerate}
+
+Votre travail consiste à compléter ces phases.
+
+\subsection{Analyse lexicale et syntaxique: \id{Sexp}}
+
+L'analyse lexicale et (une première partie de l'analyse) syntaxique est déjà
+implantée pour vous.  Elle est plus permissive %% générale
+que nécessaire et accepte n'importe quelle expression de la
+forme suivante:
+%%
+\begin{displaymath}
+  \begin{array}{r@{~}r@{~}l}
+    e & ::= & n ~\mid~ x 
+    ~\mid~ \punc{(}~\{\,e\,\}%% ~[\,.~e\,]
+     ~\punc{)}
+  \end{array}
+\end{displaymath}
+%%
+\begin{outitemize}
+\item $n$ est un entier signé en décimal.  \\
+  Il est représenté dans l'arbre en Haskell par: $\kw{Snum}~n$.
+\item $x$ est un symbole qui peut être composé d'un nombre quelconque de
+  caractères alphanumériques et/ou de ponctuation.  Par exemple $\punc+$ est
+  un symbole, $\punc{<=}$ est un symbole, $\punc{voiture}$ est un symbole,
+  et $\punc{a+b}$ est aussi un symbole.  Dans l'arbre en Haskell, un symbole
+  est représenté par: $\kw{Ssym}~x$.
+\item $\punc{(}~\{\,e\,\}%% ~[\,.~e\,]
+  ~\punc{)}$ est une liste d'expressions.  Dans l'arbre en Haskell, les
+  listes d'expressions sont représentées par des listes simplement chaînées
+  constituées de paires $\kw{Scons}~\id{left}~\id{right}$ et du marqueur de
+  début $\kw{Snil}$.  \id{right} est le dernier élément de la liste et
+  \id{left} est le reste de la liste (i.e.~ce qui le précède).
+\end{outitemize}
+%%
+Par exemple l'analyseur syntaxique transforme l'expression \texttt{(+ 2 3)}
+dans l'arbre suivant en Haskell:
+\begin{displaymath}
+  \kw{Scons}~\MAlign{
+    (\kw{Scons}~\MAlign{
+      (\kw{Scons}~\MAlign{
+        {\kw{Snil}} \\
+        (\kw{Ssym}~\str{+}))} \\
+      (\kw{Snum}~2))} \\
+    (\kw{Snum}~3)}
+\end{displaymath}
+%%
+L'analyseur lexical considère qu'un caractère $\punc{;}$ commence un
+commentaire, qui se termine alors à la fin de la ligne.
+
+\subsection{La représentation intermédiaire ``Lambda''}
+
+Cette représentation intermédiaire est le cœur de notre implémentation de
+Psil, et représente une sorte d'arbre de syntaxe abstraite.  Dans cette
+représentation, \kw{+}, \kw{-}, ... sont simplement des variables
+prédéfinies, et le sucre syntaxique n'est plus disponible, donc par exemple
+les appels de fonctions ne prennent plus qu'un seul argument.
+
+Elle est définie par les types suivants:
+
+\begin{verbatim}
+data Lexp = Lnum Int            -- Constante entière.
+          | Lvar Var            -- Référence à une variable.
+          | Lhastype Lexp Ltype -- Annotation de type.
+          | Lapp Lexp Lexp      -- Appel de fonction, avec un argument.
+          | Llet Var Lexp Lexp  -- Déclaration de variable locale.
+          | Lfun Var Lexp       -- Fonction anonyme.
+          deriving (Show, Eq)
+\end{verbatim}
+
+\begin{verbatim}
+data Ltype = Lint
+           | Larw Ltype Ltype   -- Type "arrow" des fonctions.
+           deriving (Show, Eq)
+
+data Ldec = Ldec Var Ltype      -- Déclaration globale.
+          | Ldef Var Lexp       -- Définition globale.
+          deriving (Show, Eq)
+\end{verbatim}
+
+\subsection{L'environnement d'exécution}
+
+Le code fourni défini aussi l'environnement initial d'exécution, qui
+contient les fonctions prédéfinies du langage telles que l'addition, la
+soustraction, etc.  Il est défini comme une table qui associe à chaque
+identificateur prédéfini la valeur (de type \id{Value}) associée.
+
+\section{Cadeaux}
+
+Comme mentionné, l'analyseur lexical et l'analyseur syntaxique sont
+déjà fournis.  Dans le fichier \texttt{Psil.hs}, vous trouverez les
+déclarations suivantes:
+\begin{outitemize}
+\item \id{Sexp} est le type des arbres, il défini les différents noeuds qui
+  peuvent y apparaître.
+\item \id{readSexp} est la fonction d'analyse syntaxique.
+\item \id{showSexp} est un pretty-printer qui imprime une expression sous sa
+  forme ``originale''.
+\item \id{Lexp} est le type de la représentation intermédiaire du même nom.
+\item \id{s2l} est la fonction qui ``élabore'' une expression de type
+  \id{Sexp} en \id{Lexp}.
+\item \id{check} et \id{synth} sont les fonctions qui vérifient et
+  synthétisent (infèrent) le type d'une expression.
+\item \id{tenv0} est l'environnement de typage initial.
+\item \id{venv0} est l'environnement d'évaluation initial.
+\item \id{Value} est le type du résultat de l'évaluation d'une expression.
+\item \id{eval} est la fonction d'évaluation qui transforme une expression
+  de type \id{Lexp} en une valeur de type \id{Value}.
+%% \item \id{evalSexp} est une fonction qui combine les phases ci-dessus pour
+%%   évaluer une \id{Sexp}.
+\item \id{run} est la fonction principale qui lie le tout; elle prend un nom
+  de fichier et évalue sur toutes les déclarations trouvées dans ce fichier.
+\end{outitemize}
+
+Voilà ci-dessous un exemple de session interactive sur une machine GNU/Linux,
+avec le code fourni:
+\begin{verbatim}
+% ghci psil.hs
+GHCi, version 8.8.4: https://www.haskell.org/ghc/  :? for help
+[1 of 1] Compiling Main             ( psil.hs, interpreted )
+
+psil.hs:310:1: warning: [-Wincomplete-patterns]
+    Pattern match(es) are non-exhaustive
+    In an equation for ‘eval’:
+        Patterns not matched:
+            _ (Lhastype _ _)
+            _ (Lapp _ _)
+            _ (Llet _ _ _)
+            _ (Lfun _ _)
+    |
+310 | eval _venv (Lnum n) = Vnum n
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^...
+
+psil.hs:322:1: warning: [-Wincomplete-patterns]
+    Pattern match(es) are non-exhaustive
+    In an equation for ‘process_decl’:
+        Patterns not matched: ((_, _), Just (_, _), _) (Ldef _ _)
+    |
+322 | process_decl (env, Nothing, res) (Ldec x t) = (env, Just (x,t), res)
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^...
+Ok, one module loaded.
+*Main> run "exemples.psil"
+  2 : Lint
+  <fonction> : Larw Lint (Larw Lint Lint)
+  *** Exception: Expression Psil inconnue: (+ 2)
+CallStack (from HasCallStack):
+  error, called at psil.hs:223:10 in main:Main
+*Main> 
+\end{verbatim}
+
+Lorsque votre travail sera fini, il ne devrait plus y avoir
+d'avertissements, et \texttt{run} devrait renvoyer plus de valeurs que
+juste les deux ci-dessus et terminer sans erreurs.
+
+\section{À faire}
+
+Vous allez devoir compléter l'implantation de ce langage, c'est à dire
+compléter \id{s2l}, \id{check}, \id{eval}, ...
+Je recommande de le faire en avançant dans
+\texttt{exemples.psil} plutôt que d'essayer de compléter tout \id{s2l} avant
+de commencer à attaquer la suite.
+Ceci dit, libre à vous de choisir l'ordre qui vous plaît.
+
+De même je vous recommande fortement de travailler en binôme (\emph{pair
+programming}) plutôt que de vous diviser le travail, vu que la difficulté
+est plus dans la compréhension que dans la quantité de travail.
+
+Le code contient des indications des endroits que vous devez modifiez.
+Généralement cela signifie qu'il ne devrait pas être nécessaire de faire
+d'autres modifications, sauf ajouter des définitions auxiliaires.  Vous pouvez
+aussi modifier le reste du code, si vous le voulez, mais il faudra alors
+justifier ces modifications dans votre rapport en expliquant pourquoi cela
+vous a semblé nécessaire.
+
+Vous devez aussi fournir un fichier de tests \texttt{tests.psil}, qui, tout
+comme \texttt{exemples.psil} devrait non seulement contenir du code Psil
+mais aussi indiquer les valeurs et types qui lui corresponde (à votre avis).
+Il doit contenir au moins 5 tests que \emph{vous} avez écrits et qui
+devraient tester différents recoins de Psil.
+
+\subsection{Remise}
+
+Pour la remise, vous devez remettre trois fichiers (\texttt{psil.hs},
+\texttt{tests.psil}, et \texttt{rapport.tex}) par la page Moodle (aussi
+nommé StudiUM) du cours.  Assurez-vous que le rapport compile correctement
+sur \texttt{ens.iro} (auquel vous pouvez vous connecter par SSH).
+
+\section{Détails}
+
+\begin{itemize}
+\item La note sera divisée comme suit: 25\% pour le rapport, 15\% pour les
+  tests, 60\% pour le code Haskell (i.e. élaboration, vérification des
+  types, et évaluation).
+\item Tout usage de matériel (code ou texte) emprunté à quelqu'un d'autre
+  (trouvé sur le web, ...) doit être dûment mentionné, sans quoi cela sera
+  considéré comme du plagiat.
+\item Le code ne doit en aucun cas dépasser 80 colonnes.
+\item Vérifiez la page web du cours, pour d'éventuels errata, et d'autres
+  indications supplémentaires.
+\item La note est basée d'une part sur des tests automatiques, d'autre part
+  sur la lecture du code, ainsi que sur le rapport.  Le critère le plus
+  important, est que votre code doit se comporter de manière correcte.
+  Ensuite, vient la qualité du code: plus c'est simple, mieux c'est.
+  S'il y a beaucoup de commentaires, c'est généralement un symptôme que le
+  code n'est pas clair; mais bien sûr, sans commentaires le code (même
+  simple) est souvent incompréhensible.  L'efficacité de votre code est sans
+  importance, sauf %% pour \id{eval} où vous devez faire attention à faire
+  %% autant de travail que possible avant de recevoir \id{venv}, ou bien sûr de
+  %% manière plus générale
+  si votre code utilise un algorithme vraiment
+  particulièrement ridiculement inefficace.
+\end{itemize}
+
+\end{document}
