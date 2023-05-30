@@ -227,11 +227,17 @@ s2l (Ssym s) = Lvar s
 
 -- ¡¡COMPLÉTER ICI!!
 s2l (Scons (Ssym "hastype") (Scons e t)) = Lhastype (s2l e) (s2t t)
-s2l (Scons (Ssym "app") (Scons e1 e2)) = Lapp (s2l e1) (s2l e2)
+s2l (Scons (Ssym "app") (Scons e es)) = foldl Lapp (s2l e) (map s2l (unpackList es))
 s2l (Scons (Ssym "let") (Scons (Scons (Ssym v) e1) e2)) = Llet v (s2l e1) (s2l e2)
 s2l (Scons (Ssym "fun") (Scons (Ssym v) e)) = Lfun v (s2l e)
 -- ¡¡COMPLÉTER ICI!!
+
 s2l se = error ("Expression Psil inconnue: " ++ (showSexp se))
+
+-- Helper function to unpack a list of Sexp
+unpackList :: Sexp -> [Sexp]
+unpackList Snil = []
+unpackList (Scons x xs) = x : unpackList xs
 
 s2d :: Sexp -> Ldec
 s2d (Scons (Scons (Scons Snil (Ssym "def")) (Ssym v)) e) = Ldef v (s2l e)
@@ -239,6 +245,7 @@ s2d (Scons (Scons (Scons Snil (Ssym "def")) (Ssym v)) e) = Ldef v (s2l e)
 -- ¡¡COMPLÉTER ICI!!
 s2d (Scons (Scons (Scons Snil (Ssym "dec")) (Ssym v)) t) = Ldec v (s2t t)
 -- ¡¡COMPLÉTER ICI!!
+
 s2d se = error ("Déclaration Psil inconnue: " ++ showSexp se)
 
 ---------------------------------------------------------------------------
@@ -269,9 +276,26 @@ tenv0 = [("+", Larw Lint (Larw Lint Lint)),
          ("/", Larw Lint (Larw Lint Lint)),
          ("if0", Larw Lint (Larw Lint (Larw Lint Lint)))]
 
--- `check Γ e τ` vérifie que `e` a type `τ` dans le contexte `Γ`.
+-- `check Γ e t` vérifie que `e` a type `t` dans le contexte `Γ`.
 check :: TEnv -> Lexp -> Ltype -> Maybe TypeError
+
 -- ¡¡COMPLÉTER ICI!!
+check tenv (Lnum _) Lint = Nothing -- Constante entière has type Lint
+
+check tenv (Lvar x) t = if mlookup tenv x == t then Nothing else Just ("Erreur de type: " ++ show x ++ " a le type " ++ show (mlookup tenv x) ++ " au lieu de " ++ show t)
+
+check tenv (Lhastype e t') t = if t' == t then check tenv e t else Just ("Erreur de type: " ++ show e ++ " a le type " ++ show t' ++ " au lieu de " ++ show t)
+
+check tenv (Lapp e1 e2) t = case synth tenv e1 of
+  Larw t1 t2 -> if t1 == t then check tenv e2 t1 else Just ("Erreur de type: l'argument de " ++ show e1 ++ " a le type " ++ show t ++ " au lieu de " ++ show t1)
+  _ -> Just ("Erreur de type: " ++ show e1 ++ " n'est pas de type flèche")
+
+check tenv (Llet x e1 e2) t = case synth tenv e1 of
+  t1 -> check (minsert tenv x t1) e2 t
+
+check tenv (Lfun x e) (Larw t1 t2) = check (minsert tenv x t1) e t2
+-- ¡¡COMPLÉTER ICI!!
+
 check tenv e t
   -- Essaie d'inférer le type et vérifie alors s'il correspond au
   -- type attendu.
@@ -280,7 +304,7 @@ check tenv e t
        else Just ("Erreur de type: " ++ show t ++ " ≠ " ++ show t')
 
 -- `synth Γ e` vérifie que `e` est typé correctement et ensuite "synthétise"
--- et renvoie son type `τ`.
+-- et renvoie son type `t`.
 synth :: TEnv -> Lexp -> Ltype
 synth _    (Lnum _) = Lint
 synth tenv (Lvar v) = mlookup tenv v
@@ -288,7 +312,28 @@ synth tenv (Lhastype e t) =
     case check tenv e t of
       Nothing -> t
       Just err -> error err
+
 -- ¡¡COMPLÉTER ICI!!
+synth tenv (Lapp e1 e2) =
+  case synth tenv e1 of
+    Larw t1 t2 ->
+      case check tenv e2 t1 of
+        Nothing -> t2
+        Just err -> error ("Erreur de type: l'argument de " ++ show e1 ++ " a le type " ++ show (synth tenv e2) ++ " au lieu de " ++ show t1)
+    _ -> error ("Erreur de type: " ++ show e1 ++ " n'est pas de type flèche")
+
+synth tenv (Llet x e1 e2) =
+  case synth tenv e1 of
+    t1 -> synth (minsert tenv x t1) e2
+
+synth tenv (Lfun x e) =
+  case synth (minsert tenv x t1) e of
+    t2 -> Larw t1 t2
+  where t1 = mlookup tenv x
+
+
+-- ¡¡COMPLÉTER ICI!!
+
 synth _tenv e = error ("Incapable de trouver le type de: " ++ (show e))
 
         
