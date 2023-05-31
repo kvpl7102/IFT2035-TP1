@@ -205,7 +205,7 @@ data Lexp = Lnum Int            -- Constante entière.
           | Lfun Var Lexp       -- Fonction anonyme.
           deriving (Show, Eq)
 
--- Type Haskell qui décrit les déclarations Psil.
+-- Type Haskell qui décrit les déclarations Psil.   
 data Ldec = Ldec Var Ltype      -- Déclaration globale.
           | Ldef Var Lexp       -- Définition globale.3
           deriving (Show, Eq)
@@ -217,8 +217,11 @@ s2t :: Sexp -> Ltype
 s2t (Ssym "Int") = Lint
 
 -- ¡¡COMPLÉTER ICI!!
-s2t (Scons (Ssym "Arrow") (Scons t1 t2)) = Larw (s2t t1) (s2t t2)
+s2t (Scons t Snil) = s2t t
+s2t (Scons (Ssym "->") (Scons t1 t2)) = Larw (s2t t1) (s2t t2)
+s2t (Scons t1 t2) = Larw (s2t t1) (s2t t2)
 -- ¡¡COMPLÉTER ICI!!
+
 s2t se = error ("Type Psil inconnu: " ++ (showSexp se))
 
 s2l :: Sexp -> Lexp
@@ -226,11 +229,24 @@ s2l (Snum n) = Lnum n
 s2l (Ssym s) = Lvar s
 
 -- ¡¡COMPLÉTER ICI!!
-s2l (Scons (Ssym "hastype") (Scons e t)) = Lhastype (s2l e) (s2t t)
-s2l (Scons (Ssym "app") (Scons e1 e2)) = Lapp (s2l e1) (s2l e2)
+s2l (Scons (Ssym "hastype") (Scons e (Scons t Snil))) = Lhastype (s2l e) (s2t t)
+
+s2l (Scons (Ssym "app") (Scons f args)) = constructApp (s2l f) (map s2l args)
+  where
+    constructApp f [] = f
+    constructApp f (arg:args') = Lapp (constructApp f args') arg
+
 s2l (Scons (Ssym "let") (Scons (Scons (Ssym v) e1) e2)) = Llet v (s2l e1) (s2l e2)
-s2l (Scons (Ssym "fun") (Scons (Ssym v) e)) = Lfun v (s2l e)
+
+-- Sucre syntaxique des fonctions anonyme
+s2l (Scons (Ssym "fun") (Scons (Scons (Ssym arg) Snil) (Scons body Snil))) = 
+  Lfun arg (s2l body)
+
+s2l (Scons (Ssym "fun") (Scons (Scons (Ssym e) es) body)) =
+  Lfun e (s2l (Scons (Ssym "fun") (Scons es body)))
+
 -- ¡¡COMPLÉTER ICI!!
+
 s2l se = error ("Expression Psil inconnue: " ++ (showSexp se))
 
 s2d :: Sexp -> Ldec
@@ -239,6 +255,7 @@ s2d (Scons (Scons (Scons Snil (Ssym "def")) (Ssym v)) e) = Ldef v (s2l e)
 -- ¡¡COMPLÉTER ICI!!
 s2d (Scons (Scons (Scons Snil (Ssym "dec")) (Ssym v)) t) = Ldec v (s2t t)
 -- ¡¡COMPLÉTER ICI!!
+
 s2d se = error ("Déclaration Psil inconnue: " ++ showSexp se)
 
 ---------------------------------------------------------------------------
@@ -272,6 +289,56 @@ tenv0 = [("+", Larw Lint (Larw Lint Lint)),
 -- `check Γ e τ` vérifie que `e` a type `τ` dans le contexte `Γ`.
 check :: TEnv -> Lexp -> Ltype -> Maybe TypeError
 -- ¡¡COMPLÉTER ICI!!
+
+-- `check` for Lnum:
+check tenv (Lnum _) Lint = Nothing
+
+-- `check` for Lvar:
+check tenv (Lvar x) t =
+  case mlookup tenv x of
+    Just t' ->
+      if t' == t
+        then Nothing
+        else Just ("Erreur de type: " ++ show t' ++ " ≠ " ++ show t)
+    Nothing -> Just ("Variable non liée: " ++ show x)
+
+-- `check` for Lhastype:
+check tenv (Lhastype e t) t' =
+  if t == t'
+    then check tenv e t
+    else Just ("Erreur de type: " ++ show t ++ " ≠ " ++ show t')
+
+-- `check` for Lapp:
+check tenv (Lapp e1 e2) t =
+  case synth tenv e1 of
+    Larw t1 t2 ->
+      if t1 == synth tenv e2 && t2 == t
+        then Nothing
+        else
+          Just
+            ( "Erreur de type dans l'application: "
+                ++ show t1
+                ++ " -> "
+                ++ show t2
+                ++ " ≠ "
+                ++ show t
+            )
+    _ -> Just ("Erreur de type: Application impossible sur l'expression " ++ show e1)
+
+-- `check` for Llet:    
+check tenv (Llet x e1 e2) t =
+  case synth tenv e1 of
+    t1 -> check (minsert tenv x t1) e2 t
+
+-- `check` for Lfun:
+check tenv (Lfun x e) t =
+  case t of
+    Larw t1 t2 -> check (minsert tenv x t1) e t2
+    _ -> Just ("Erreur de type: Attendu un type flèche dans l'expression " ++ show (Lfun x e))
+
+-- ¡¡COMPLÉTER ICI!!
+
+-- Default case:
 check tenv e t
   -- Essaie d'inférer le type et vérifie alors s'il correspond au
   -- type attendu.
@@ -288,7 +355,29 @@ synth tenv (Lhastype e t) =
     case check tenv e t of
       Nothing -> t
       Just err -> error err
+
 -- ¡¡COMPLÉTER ICI!!
+
+-- `synth` for Lapp:
+synth tenv (Lapp e1 e2) = 
+  case synth tenv e1 of 
+    Larw t1 t2 -> 
+      case check tenv e2 t1 of 
+        Nothing -> t2 
+        Just err -> error err
+    - -> error ("La fonction attendue dans l'application: " ++ show e1)
+
+-- `synth` for Llet:
+synth tenv (Llet x e1 e2) = 
+  let t1 = synth tenv e1 in
+    synth (minsert tenv x t1) e2
+
+-- `synthe` for Lfun:
+synth tenv (Lfun x e) = 
+  case mlookup tenv x of 
+    Just t1 -> Larw t1 (synth(minsert tenv x t1) e)
+    Nothing ->  error ("Variable non liée: " ++ show x)
+
 synth _tenv e = error ("Incapable de trouver le type de: " ++ (show e))
 
         
@@ -321,10 +410,36 @@ venv0 = [("+", Vop (\ (Vnum x) -> Vop (\ (Vnum y) -> Vnum (x + y)))),
 
 -- La fonction d'évaluation principale.
 eval :: VEnv -> Lexp -> Value
-eval _venv (Lnum n) = Vnum n
+eval venv (Lnum n) = Vnum n
 eval venv (Lvar x) = mlookup venv x
+
 -- ¡¡COMPLÉTER ICI!!
 
+-- `eval` for Lhastype:
+eval venv (Lhastype e _) =  eval venv e
+
+-- `eval` for Lapp:
+eval venv (Lapp e1 e2 ) = 
+  case eval venv e1 of
+
+    Vfun venv' x body ->
+      let argVal = eval venv e2 
+          venv'' = minsert venv' x argVal
+      in eval venv'' body
+    
+    Vop op -> 
+      let argVal = eval venv e2 
+      in op argVal
+  _ -> error ("La valeur attendue dans l'application: " ++ show e1)
+
+-- `eval` for Llet:
+eval venv (Llet x e1 e2) =
+  let v1 = eval venv e1
+      venv' = minsert venv x v1
+   in eval venv' e2
+
+-- `eval` for Lfun:
+eval venv (Lfun x body) = Vfun venv x body
 
 -- État de l'évaluateur.
 type EState = ((TEnv, VEnv),       -- Contextes de typage et d'évaluation.
