@@ -295,21 +295,6 @@ tenv0 = [("+", Larw Lint (Larw Lint Lint)),
 check :: TEnv -> Lexp -> Ltype -> Maybe TypeError
 
 -- ¡¡COMPLÉTER ICI!!
-check tenv (Lnum _) Lint = Nothing -- Constante entière has type Lint
-
-check tenv (Lvar x) t = if mlookup tenv x == t then Nothing else Just ("Erreur de type: " ++ show x ++ " a le type " ++ show (mlookup tenv x) ++ " au lieu de " ++ show t)
-
-check tenv (Lhastype e t') t = if t' == t then check tenv e t else Just ("Erreur de type: " ++ show e ++ " a le type " ++ show t' ++ " au lieu de " ++ show t)
-
-check tenv (Lapp e1 e2) t = case synth tenv e1 of
-  Larw t1 t2 -> if t1 == t then check tenv e2 t1 else Just ("Erreur de type: l'argument de " ++ show e1 ++ " a le type " ++ show t ++ " au lieu de " ++ show t1)
-  _ -> Just ("Erreur de type: " ++ show e1 ++ " n'est pas de type flèche")
-
-check tenv (Llet x e1 e2) t = case synth tenv e1 of
-  t1 -> check (minsert tenv x t1) e2 t
-
-check tenv (Lfun x e) (Larw t1 t2) = check (minsert tenv x t1) e t2
--- ¡¡COMPLÉTER ICI!!
 
 -- `check` for Lnum:
 check tenv (Lnum _) Lint = Nothing
@@ -380,18 +365,6 @@ synth tenv (Lhastype e t) =
 
 -- ¡¡COMPLÉTER ICI!!
 
-synth tenv (Llet x e1 e2) =
-  case synth tenv e1 of
-    t1 -> synth (minsert tenv x t1) e2
-
-synth tenv (Lfun x e) =
-  case synth (minsert tenv x t1) e of
-    t2 -> Larw t1 t2
-  where t1 = mlookup tenv x
-
-
--- ¡¡COMPLÉTER ICI!!
-
 -- `synth` for Lapp:
 synth tenv (Lapp e1 e2) = 
   case synth tenv e1 of 
@@ -406,7 +379,7 @@ synth tenv (Llet x e1 e2) =
   let t1 = synth tenv e1 in
     synth (minsert tenv x t1) e2
 
--- `synthe` for Lfun:
+-- `synth` for Lfun:
 synth tenv (Lfun x e) = 
   case mlookup tenv x of 
     Just t1 -> Larw t1 (synth(minsert tenv x t1) e)
@@ -414,6 +387,7 @@ synth tenv (Lfun x e) =
 
 synth _tenv e = error ("Incapable de trouver le type de: " ++ (show e))
 
+-- ¡¡COMPLÉTER ICI!!
         
 ---------------------------------------------------------------------------
 -- Évaluateur                                                            --
