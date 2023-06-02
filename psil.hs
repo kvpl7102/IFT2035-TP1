@@ -12,6 +12,10 @@
 {-# OPTIONS_GHC -Wno-unused-matches #-}
 {-# HLINT ignore "Replace case with maybe" #-}
 {-# HLINT ignore "Use record patterns" #-}
+{-# HLINT ignore "Avoid lambda" #-}
+{-# HLINT ignore "Use putStr" #-}
+{-# HLINT ignore "Use id" #-}
+{-# HLINT ignore "Use const" #-}
 --
 -- Ce fichier défini les fonctionalités suivantes:
 -- - Analyseur lexical
@@ -227,11 +231,22 @@ s2t (Ssym "Int") = Lint
 
 -- ¡¡COMPLÉTER ICI!!
 s2t (Scons Snil t ) = s2t t
-s2t ((Scons (Scons (Scons Snil t1) (Ssym "->")) t2)) = Larw (s2t t1) (s2t t2)
-s2t (Scons (Scons Snil t1) t2) = Larw (s2t t1) (s2t t2)
--- ¡¡COMPLÉTER ICI!!
+
+s2t (Scons (Scons (Scons Snil t1) (Ssym "->")) t2) =
+  let terms = extractTerms t1
+      returnType = s2t t2
+  in foldr (\t acc -> Larw (s2t t) acc) returnType terms
+s2t s = error ("Invalid Sexp: " ++ show s)
 
 s2t se = error ("Type Psil inconnu: " ++ (showSexp se))
+
+-- `extractTerms` function takes an Sexp and returns a list of its constituent Sexp elements. 
+-- If the Sexp matches the pattern of having a term followed by an arrow and more terms, 
+-- it recursively extracts the terms. Otherwise, it treats the entire Sexp as a single term.
+extractTerms :: Sexp -> [Sexp]
+extractTerms (Scons t1 (Scons (Ssym "->") t2)) =
+  t1 : extractTerms t2    -- Recursive case
+extractTerms s = [s]      -- Default case
 
 s2l :: Sexp -> Lexp
 s2l (Snum n) = Lnum n
@@ -241,10 +256,17 @@ s2l (Ssym s) = Lvar s
 -- `s2l` for Lhastype:
 s2l (Scons (Ssym ":") (Scons e (Scons Snil t ))) = Lhastype (s2l e) (s2t t)
 
+-- `s2l` for Llet:
+s2l (Scons (Scons (Scons Snil (Ssym "let")) (Scons Snil (Scons (Scons Snil (Ssym var)) binding))) body) 
+  = Llet var (s2l binding) (s2l body)
+
+-- `s2l` for Lfun:
+s2l (Scons (Scons (Scons Snil (Ssym "fun")) (Ssym arg)) body) = Lfun arg (s2l body)
+
 -- `s2l` for Lapp:
 s2l (Scons (Scons Snil e1) e2) = Lapp (s2l e1) (s2l e2)         -- Base case w/ 1 argument
 s2l (Scons e1 e2) = foldl Lapp (s2l e1) (map s2l (toList e2))   -- Recursive case
-  -- The helper function toList convert the remaining arguments
+  -- The helper function `toList` convert the remaining arguments
   -- of the expression into list then apply `foldl` on Lapp and 
   -- the list of arguments.
   where
@@ -252,13 +274,6 @@ s2l (Scons e1 e2) = foldl Lapp (s2l e1) (map s2l (toList e2))   -- Recursive cas
     toList (Scons Snil e) = [e]
     toList (Scons e1 e2) = e1 : toList e2
     toList e = [e]
-
--- `s2l` for Llet:
-s2l (Scons (Scons (Scons Snil (Ssym "let")) (Scons Snil (Scons (Scons Snil (Ssym var)) binding))) body) 
-  = Llet var (s2l binding) (s2l body)
-
--- `s2l` for Lfun:
-s2l (Scons (Scons (Scons Snil (Ssym "fun")) (Ssym arg)) body) = Lfun arg (s2l body)
 
 -- Other cases (Error):
 s2l se = error ("Expression Psil inconnue: " ++ (showSexp se))
@@ -377,7 +392,7 @@ synth tenv (Lapp e1 e2) =
     Larw t1 t2 -> 
       case check tenv e2 t1 of 
         Nothing -> t2 
-        Just err -> error ("Type initial incorrect")
+        Just err -> error ("Type initial incorrect...")
     t -> error ("Ltype donné incorrect"++(show t))
 
 -- `synth` for Llet:
@@ -435,7 +450,7 @@ eval venv (Lhastype e _) =  eval venv e
 -- `eval` for Lapp:
 eval venv (Lapp e1 e2 ) = 
   case eval venv e1 of
-    
+
     Vfun venv' x body ->
       let argVal = eval venv e2 
           venv'' = minsert venv' x argVal
@@ -444,7 +459,7 @@ eval venv (Lapp e1 e2 ) =
     Vop op -> 
       let argVal = eval venv e2 
       in op argVal
-    _ -> error ("La valeur attendue dans l'application: " ++ show e1)
+    _ -> error ("Valeur attendue dans l'application: " ++ show e1)
 
 -- `eval` for Llet:
 eval venv (Llet x e1 e2) =
@@ -467,6 +482,7 @@ process_decl (env, Just (x', _), res) (decl@(Ldec _ _)) =
     process_decl (env, Nothing,
                   error ("Manque une définition pour: " ++ x') : res)
                  decl
+
 process_decl ((tenv, venv), Nothing, res) (Ldef x e) =
     -- Le programmeur n'a *pas* fourni d'annotation de type pour `x`.
     let ltype = synth tenv e
@@ -474,8 +490,16 @@ process_decl ((tenv, venv), Nothing, res) (Ldef x e) =
         val = eval venv e
         venv' = minsert venv x val
     in ((tenv', venv'), Nothing, (val, ltype) : res)
--- ¡¡COMPLÉTER ICI!!
 
+-- ¡¡COMPLÉTER ICI!!
+process_decl ((tenv, venv), Just (x', t'), res) (Ldef x e)
+    | x /= x' = error ("Définition inattendue pour: " ++ x)
+    | otherwise =
+        case check tenv e t' of
+          Nothing -> let val = eval venv e
+                         venv' = minsert venv x val
+                     in ((tenv, venv'), Nothing, (val, t') : res)
+          Just err -> error ("Type incorrect dans la définition de " ++ x ++ ": " ++ err)
 ---------------------------------------------------------------------------
 -- Toplevel                                                              --
 ---------------------------------------------------------------------------
