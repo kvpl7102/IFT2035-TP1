@@ -2,6 +2,16 @@
 {-# OPTIONS_GHC -Wall #-}
 {-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
 {-# HLINT ignore "Redundant bracket" #-}
+{-# LANGUAGE BlockArguments #-}
+{-# OPTIONS_GHC -Wno-name-shadowing #-}
+{-# OPTIONS_GHC -Wno-incomplete-uni-patterns #-}
+{-# HLINT ignore "Use camelCase" #-}
+{-# OPTIONS_GHC -Wno-incomplete-patterns #-}
+{-# HLINT ignore "Use concatMap" #-}
+{-# OPTIONS_GHC -Wno-overlapping-patterns #-}
+{-# OPTIONS_GHC -Wno-unused-matches #-}
+{-# HLINT ignore "Replace case with maybe" #-}
+{-# HLINT ignore "Use record patterns" #-}
 --
 -- Ce fichier défini les fonctionalités suivantes:
 -- - Analyseur lexical
@@ -16,7 +26,6 @@
 import Text.ParserCombinators.Parsec -- Bibliothèque d'analyse syntaxique.
 import Data.Char                -- Conversion de Chars de/vers Int et autres.
 import System.IO                -- Pour stdout, hPutStr
-
 ---------------------------------------------------------------------------
 -- 1ère représentation interne des expressions de notre language         --
 ---------------------------------------------------------------------------
@@ -217,9 +226,9 @@ s2t :: Sexp -> Ltype
 s2t (Ssym "Int") = Lint
 
 -- ¡¡COMPLÉTER ICI!!
-s2t (Scons t Snil) = s2t t
-s2t (Scons (Ssym "->") (Scons t1 t2)) = Larw (s2t t1) (s2t t2)
-s2t (Scons t1 t2) = Larw (s2t t1) (s2t t2)
+s2t (Scons Snil t ) = s2t t
+s2t ((Scons (Scons (Scons Snil t1) (Ssym "->")) t2)) = Larw (s2t t1) (s2t t2)
+s2t (Scons (Scons Snil t1) t2) = Larw (s2t t1) (s2t t2)
 -- ¡¡COMPLÉTER ICI!!
 
 s2t se = error ("Type Psil inconnu: " ++ (showSexp se))
@@ -229,38 +238,39 @@ s2l (Snum n) = Lnum n
 s2l (Ssym s) = Lvar s
 
 -- ¡¡COMPLÉTER ICI!!
-s2l (Scons (Ssym "hastype") (Scons e (Scons t Snil))) = Lhastype (s2l e) (s2t t)
+-- `s2l` for Lhastype:
+s2l (Scons (Ssym ":") (Scons e (Scons Snil t ))) = Lhastype (s2l e) (s2t t)
 
-s2l (Scons (Ssym "app") (Scons f args)) = constructApp (s2l f) (map s2l args)
+-- `s2l` for Lapp:
+s2l (Scons (Scons Snil e1) e2) = Lapp (s2l e1) (s2l e2)         -- Base case w/ 1 argument
+s2l (Scons e1 e2) = foldl Lapp (s2l e1) (map s2l (toList e2))   -- Recursive case
+  -- The helper function toList convert the remaining arguments
+  -- of the expression into list then apply `foldl` on Lapp and 
+  -- the list of arguments.
   where
-    constructApp f [] = f
-    constructApp f (arg:args') = Lapp (constructApp f args') arg
+    toList :: Sexp -> [Sexp]
+    toList (Scons Snil e) = [e]
+    toList (Scons e1 e2) = e1 : toList e2
+    toList e = [e]
 
-s2l (Scons (Ssym "let") (Scons (Scons (Ssym v) e1) e2)) = Llet v (s2l e1) (s2l e2)
+-- `s2l` for Llet:
+s2l (Scons (Scons (Scons Snil (Ssym "let")) (Scons Snil (Scons (Scons Snil (Ssym var)) binding))) body) 
+  = Llet var (s2l binding) (s2l body)
 
--- Sucre syntaxique des fonctions anonyme
-s2l (Scons (Ssym "fun") (Scons (Scons (Ssym arg) Snil) (Scons body Snil))) = 
-  Lfun arg (s2l body)
+-- `s2l` for Lfun:
+s2l (Scons (Scons (Scons Snil (Ssym "fun")) (Ssym arg)) body) = Lfun arg (s2l body)
 
-s2l (Scons (Ssym "fun") (Scons (Scons (Ssym e) es) body)) =
-  Lfun e (s2l (Scons (Ssym "fun") (Scons es body)))
-
--- ¡¡COMPLÉTER ICI!!
-
+-- Other cases (Error):
 s2l se = error ("Expression Psil inconnue: " ++ (showSexp se))
 
--- Helper function to unpack a list of Sexp
-unpackList :: Sexp -> [Sexp]
-unpackList Snil = []
-unpackList (Scons x xs) = x : unpackList xs
-
 s2d :: Sexp -> Ldec
+-- `s2d` for Ldef:
 s2d (Scons (Scons (Scons Snil (Ssym "def")) (Ssym v)) e) = Ldef v (s2l e)
 
--- ¡¡COMPLÉTER ICI!!
+-- `s2d` for Ldec:
 s2d (Scons (Scons (Scons Snil (Ssym "dec")) (Ssym v)) t) = Ldec v (s2t t)
--- ¡¡COMPLÉTER ICI!!
 
+-- Other cases (Error):
 s2d se = error ("Déclaration Psil inconnue: " ++ showSexp se)
 
 ---------------------------------------------------------------------------
@@ -301,12 +311,9 @@ check tenv (Lnum _) Lint = Nothing
 
 -- `check` for Lvar:
 check tenv (Lvar x) t =
-  case mlookup tenv x of
-    Just t' ->
-      if t' == t
-        then Nothing
-        else Just ("Erreur de type: " ++ show t' ++ " ≠ " ++ show t)
-    Nothing -> Just ("Variable non liée: " ++ show x)
+  let t' = mlookup tenv x
+  in if t == t' then Nothing
+  else Just ("Erreur de type: " ++ show t ++ " ≠ " ++ show t')
 
 -- `check` for Lhastype:
 check tenv (Lhastype e t) t' =
@@ -362,7 +369,6 @@ synth tenv (Lhastype e t) =
       Nothing -> t
       Just err -> error err
 
-
 -- ¡¡COMPLÉTER ICI!!
 
 -- `synth` for Lapp:
@@ -371,8 +377,8 @@ synth tenv (Lapp e1 e2) =
     Larw t1 t2 -> 
       case check tenv e2 t1 of 
         Nothing -> t2 
-        Just err -> error err
-    - -> error ("La fonction attendue dans l'application: " ++ show e1)
+        Just err -> error ("Type initial incorrect")
+    t -> error ("Ltype donné incorrect"++(show t))
 
 -- `synth` for Llet:
 synth tenv (Llet x e1 e2) = 
@@ -382,10 +388,10 @@ synth tenv (Llet x e1 e2) =
 -- `synth` for Lfun:
 synth tenv (Lfun x e) = 
   case mlookup tenv x of 
-    Just t1 -> Larw t1 (synth(minsert tenv x t1) e)
-    Nothing ->  error ("Variable non liée: " ++ show x)
+    t1 -> Larw t1 (synth(minsert tenv x t1) e)
+    _ ->  error ("Variable non liée: " ++ show x)
 
-synth _tenv e = error ("Incapable de trouver le type de: " ++ (show e))
+synth tenv e = error ("Incapable de trouver le type de: " ++ (show e))
 
 -- ¡¡COMPLÉTER ICI!!
         
@@ -429,7 +435,7 @@ eval venv (Lhastype e _) =  eval venv e
 -- `eval` for Lapp:
 eval venv (Lapp e1 e2 ) = 
   case eval venv e1 of
-
+    
     Vfun venv' x body ->
       let argVal = eval venv e2 
           venv'' = minsert venv' x argVal
@@ -438,7 +444,7 @@ eval venv (Lapp e1 e2 ) =
     Vop op -> 
       let argVal = eval venv e2 
       in op argVal
-  _ -> error ("La valeur attendue dans l'application: " ++ show e1)
+    _ -> error ("La valeur attendue dans l'application: " ++ show e1)
 
 -- `eval` for Llet:
 eval venv (Llet x e1 e2) =
