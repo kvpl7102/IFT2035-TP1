@@ -16,6 +16,9 @@
 {-# HLINT ignore "Use putStr" #-}
 {-# HLINT ignore "Use id" #-}
 {-# HLINT ignore "Use const" #-}
+{-# HLINT ignore "Use isNothing" #-}
+{-# HLINT ignore "Use <$>" #-}
+{-# HLINT ignore "Avoid lambda using `infix`" #-}
 --
 -- Ce fichier défini les fonctionalités suivantes:
 -- - Analyseur lexical
@@ -207,7 +210,13 @@ type Var = String
 -- Type Haskell qui décrit les types Psil.
 data Ltype = Lint
            | Larw Ltype Ltype   -- Type "arrow" des fonctions.
-           deriving (Show, Eq)
+           deriving (Eq)
+
+-- Customize displau of Larw arrow functions
+instance Show Ltype where
+    showsPrec p Lint = showString "Int"
+    showsPrec p (Larw t1 t2) = showParen (p > 0) $
+        showsPrec 1 t1 . showString " -> " . shows t2
 
 -- Type Haskell qui décrit les expressions Psil.
 data Lexp = Lnum Int            -- Constante entière.
@@ -222,7 +231,7 @@ data Lexp = Lnum Int            -- Constante entière.
 data Ldec = Ldec Var Ltype      -- Déclaration globale.
           | Ldef Var Lexp       -- Définition globale.3
           deriving (Show, Eq)
-          
+
 
 -- Conversion de Sexp à Lambda --------------------------------------------
 
@@ -231,22 +240,16 @@ s2t (Ssym "Int") = Lint
 
 -- ¡¡COMPLÉTER ICI!!
 s2t (Scons Snil t ) = s2t t
+s2t (Scons (Scons (Scons Snil t1) (Ssym "->") ) t2 ) =  Larw (s2t t1) (s2t t2)
 
-s2t (Scons (Scons (Scons Snil t1) (Ssym "->")) t2) =
-  let terms = extractTerms t1
-      returnType = s2t t2
-  in foldr (\t acc -> Larw (s2t t) acc) returnType terms
-s2t s = error ("Invalid Sexp: " ++ show s)
+s2t (Scons (Scons t1s (Ssym "->") ) t2 )  = unfoldLarw [t1s] t2
+  where
+    unfoldLarw [] _ = error "Invalid type expression: Missing type before arrow"
+    unfoldLarw [t1'] t2' = Larw (s2t t1') (s2t t2')
+    unfoldLarw (t1':ts) t2' = Larw (s2t t1') (unfoldLarw ts t2')
+s2t s = error ("Invalid type " ++ show s)
 
 s2t se = error ("Type Psil inconnu: " ++ (showSexp se))
-
--- `extractTerms` function takes an Sexp and returns a list of its constituent Sexp elements. 
--- If the Sexp matches the pattern of having a term followed by an arrow and more terms, 
--- it recursively extracts the terms. Otherwise, it treats the entire Sexp as a single term.
-extractTerms :: Sexp -> [Sexp]
-extractTerms (Scons t1 (Scons (Ssym "->") t2)) =
-  t1 : extractTerms t2    -- Recursive case
-extractTerms s = [s]      -- Default case
 
 s2l :: Sexp -> Lexp
 s2l (Snum n) = Lnum n
@@ -254,10 +257,10 @@ s2l (Ssym s) = Lvar s
 
 -- ¡¡COMPLÉTER ICI!!
 -- `s2l` for Lhastype:
-s2l (Scons (Ssym ":") (Scons e (Scons Snil t ))) = Lhastype (s2l e) (s2t t)
+s2l (Scons ( (Scons (Scons Snil (Ssym ":")) e)  ) t) = Lhastype (s2l e) (s2t t)
 
 -- `s2l` for Llet:
-s2l (Scons (Scons (Scons Snil (Ssym "let")) (Scons Snil (Scons (Scons Snil (Ssym var)) binding))) body) 
+s2l (Scons (Scons (Scons Snil (Ssym "let")) (Scons Snil (Scons (Scons Snil (Ssym var)) binding))) body)
   = Llet var (s2l binding) (s2l body)
 
 -- `s2l` for Lfun:
@@ -299,8 +302,8 @@ type Map α β = [(α, β)]
 
 -- Transforme une `Map` en une fonctions (qui est aussi une sorte de "Map").
 mlookup :: Map Var β -> (Var -> β)
-mlookup [] x = error ("Uknown variable: " ++ show x)
 mlookup ((x,v) : xs) x' = if x == x' then v else mlookup xs x'
+mlookup [] x = error ("Unknown variable: " ++ show x)
 
 minsert :: Map Var β -> Var -> β -> Map Var β
 minsert m x v = (x,v) : m
@@ -336,6 +339,11 @@ check tenv (Lhastype e t) t' =
     then check tenv e t
     else Just ("Erreur de type: " ++ show t ++ " ≠ " ++ show t')
 
+-- `check` for Llet:    
+check tenv (Llet x e1 e2) t =
+  case synth tenv e1 of
+    t1 -> check (minsert tenv x t1) e2 t
+
 -- `check` for Lapp:
 check tenv (Lapp e1 e2) t =
   case synth tenv e1 of
@@ -353,17 +361,20 @@ check tenv (Lapp e1 e2) t =
             )
     _ -> Just ("Erreur de type: Application impossible sur l'expression " ++ show e1)
 
--- `check` for Llet:    
-check tenv (Llet x e1 e2) t =
-  case synth tenv e1 of
-    t1 -> check (minsert tenv x t1) e2 t
+
 
 -- `check` for Lfun:
-check tenv (Lfun x e) t =
-  case t of
-    Larw t1 t2 -> check (minsert tenv x t1) e t2
-    _ -> Just ("Erreur de type: Attendu un type flèche dans l'expression " ++ show (Lfun x e))
+check tenv (Lfun x e) (Larw t1 t2) = check (minsert tenv x t1) e t2
 
+check tenv (Lapp e1 e2) t = case synth tenv e1 of
+    Larw t1 t2 -> case check tenv e2 t1 of
+        Nothing -> if t2 == t
+            then Nothing
+            else Just "Type mismatch in function application"
+        Just err -> Just err
+    _ -> Just "Invalid function type in application"
+
+check tenv (Lfun _ _) _ = Just "Invalid function type"
 -- ¡¡COMPLÉTER ICI!!
 
 -- Default case:
@@ -387,29 +398,29 @@ synth tenv (Lhastype e t) =
 -- ¡¡COMPLÉTER ICI!!
 
 -- `synth` for Lapp:
-synth tenv (Lapp e1 e2) = 
-  case synth tenv e1 of 
-    Larw t1 t2 -> 
-      case check tenv e2 t1 of 
-        Nothing -> t2 
+synth tenv (Lapp e1 e2) =
+  case synth tenv e1 of
+    Larw t1 t2 ->
+      case check tenv e2 t1 of
+        Nothing -> t2
         Just err -> error ("Type initial incorrect...")
     t -> error ("Ltype donné incorrect"++(show t))
 
 -- `synth` for Llet:
-synth tenv (Llet x e1 e2) = 
+synth tenv (Llet x e1 e2) =
   let t1 = synth tenv e1 in
     synth (minsert tenv x t1) e2
 
 -- `synth` for Lfun:
-synth tenv (Lfun x e) = 
-  case mlookup tenv x of 
-    t1 -> Larw t1 (synth(minsert tenv x t1) e)
+synth tenv (Lfun x e) =
+  case mlookup tenv x of
+    t1 -> Larw t1 (synth (minsert tenv x t1) e)
     _ ->  error ("Variable non liée: " ++ show x)
 
 synth tenv e = error ("Incapable de trouver le type de: " ++ (show e))
 
 -- ¡¡COMPLÉTER ICI!!
-        
+
 ---------------------------------------------------------------------------
 -- Évaluateur                                                            --
 ---------------------------------------------------------------------------
@@ -448,16 +459,16 @@ eval venv (Lvar x) = mlookup venv x
 eval venv (Lhastype e _) =  eval venv e
 
 -- `eval` for Lapp:
-eval venv (Lapp e1 e2 ) = 
+eval venv (Lapp e1 e2 ) =
   case eval venv e1 of
 
     Vfun venv' x body ->
-      let argVal = eval venv e2 
+      let argVal = eval venv e2
           venv'' = minsert venv' x argVal
       in eval venv'' body
-    
-    Vop op -> 
-      let argVal = eval venv e2 
+
+    Vop op ->
+      let argVal = eval venv e2
       in op argVal
     _ -> error ("Valeur attendue dans l'application: " ++ show e1)
 
@@ -492,14 +503,18 @@ process_decl ((tenv, venv), Nothing, res) (Ldef x e) =
     in ((tenv', venv'), Nothing, (val, ltype) : res)
 
 -- ¡¡COMPLÉTER ICI!!
-process_decl ((tenv, venv), Just (x', t'), res) (Ldef x e)
-    | x /= x' = error ("Définition inattendue pour: " ++ x)
-    | otherwise =
-        case check tenv e t' of
-          Nothing -> let val = eval venv e
-                         venv' = minsert venv x val
-                     in ((tenv, venv'), Nothing, (val, t') : res)
-          Just err -> error ("Type incorrect dans la définition de " ++ x ++ ": " ++ err)
+
+process_decl ((tenv, venv), Just (x', t'), res) (Ldef x e) =
+    case check tenv e t' of
+        Nothing ->
+            let val = eval venv e
+                venv' = minsert venv x val
+            in ((tenv, venv'), Just (x', t'), (val, t') : res)
+        Just err -> error ("Type incorrect dans la définition de " ++ x ++ ": " ++ err)
+
+
+
+
 ---------------------------------------------------------------------------
 -- Toplevel                                                              --
 ---------------------------------------------------------------------------

@@ -1,0 +1,16 @@
+(def r1 2)                                      
+(def r2 +)                                       
+(def r3 (+ 2))                                 
+(def r4 (+ (: 2 Int)))                           
+(def r5 ((+ 2) 4))   
+
+(dec r6 Int)
+(def r6 (+ 2 5))    
+                             
+(def r7 (let ((x 5)) (* x 4)))                   
+
+(dec f1 (Int Int -> Int))
+(def f1 (fun x (fun y (+ y 5))))                
+
+(dec recursive Int)
+(def recursive (f1 recursive 37)) 
