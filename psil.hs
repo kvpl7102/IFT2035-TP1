@@ -33,6 +33,7 @@
 import Text.ParserCombinators.Parsec -- Bibliothèque d'analyse syntaxique.
 import Data.Char                -- Conversion de Chars de/vers Int et autres.
 import System.IO                -- Pour stdout, hPutStr
+-- import Debug.Trace              -- Pour déboguer
 ---------------------------------------------------------------------------
 -- 1ère représentation interne des expressions de notre language         --
 ---------------------------------------------------------------------------
@@ -234,14 +235,28 @@ data Ldec = Ldec Var Ltype      -- Déclaration globale.
 
 
 -- Conversion de Sexp à Lambda --------------------------------------------
+s2d :: Sexp -> Ldec
+-- `s2d` for Ldef:
+s2d (Scons (Scons (Scons Snil (Ssym "def")) (Ssym v)) e) = Ldef v (s2l e)
+-- Scons (Scons (Scons Snil (Ssym "def")) (Ssym "recursive")) (Scons (Scons (Scons Snil (Ssym "f1")) (Ssym "recursive")) (Snum 37))
+
+-- `s2d` for Ldec:
+s2d (Scons (Scons (Scons Snil (Ssym "dec")) (Ssym v)) t) = Ldec v (s2t t)
+
+-- Other cases (Error):
+s2d se = error ("Déclaration Psil inconnue: " ++ showSexp se)
 
 s2t :: Sexp -> Ltype
 s2t (Ssym "Int") = Lint
 
 -- ¡¡COMPLÉTER ICI!!
 s2t (Scons Snil t ) = s2t t
+
+-- `s2t` for Larw: 1 argument before '->':
+s2t (Scons (Scons Snil (Ssym "Int")) (Ssym "Int")) = Larw (Lint) (Lint)
 s2t (Scons (Scons (Scons Snil t1) (Ssym "->") ) t2 ) =  Larw (s2t t1) (s2t t2)
 
+-- `s2t` for Larw: multiple arguments before '->':
 s2t (Scons (Scons t1s (Ssym "->") ) t2 )  = unfoldLarw [t1s] t2
   where
     unfoldLarw [] _ = error "Invalid type expression: Missing type before arrow"
@@ -260,7 +275,8 @@ s2l (Ssym s) = Lvar s
 s2l (Scons ( (Scons (Scons Snil (Ssym ":")) e)  ) t) = Lhastype (s2l e) (s2t t)
 
 -- `s2l` for Llet:
-s2l (Scons (Scons (Scons Snil (Ssym "let")) (Scons Snil (Scons (Scons Snil (Ssym var)) binding))) body)
+s2l (Scons (Scons (Scons Snil (Ssym "let")) 
+  (Scons Snil (Scons (Scons Snil (Ssym var)) binding))) body)
   = Llet var (s2l binding) (s2l body)
 
 -- `s2l` for Lfun:
@@ -280,16 +296,6 @@ s2l (Scons e1 e2) = foldl Lapp (s2l e1) (map s2l (toList e2))   -- Recursive cas
 
 -- Other cases (Error):
 s2l se = error ("Expression Psil inconnue: " ++ (showSexp se))
-
-s2d :: Sexp -> Ldec
--- `s2d` for Ldef:
-s2d (Scons (Scons (Scons Snil (Ssym "def")) (Ssym v)) e) = Ldef v (s2l e)
-
--- `s2d` for Ldec:
-s2d (Scons (Scons (Scons Snil (Ssym "dec")) (Ssym v)) t) = Ldec v (s2t t)
-
--- Other cases (Error):
-s2d se = error ("Déclaration Psil inconnue: " ++ showSexp se)
 
 ---------------------------------------------------------------------------
 -- Vérification des types                                                --
@@ -345,36 +351,83 @@ check tenv (Llet x e1 e2) t =
     t1 -> check (minsert tenv x t1) e2 t
 
 -- `check` for Lapp:
-check tenv (Lapp e1 e2) t =
-  case synth tenv e1 of
-    Larw t1 t2 ->
-      if t1 == synth tenv e2 && t2 == t
-        then Nothing
-        else
-          Just
-            ( "Erreur de type dans l'application: "
-                ++ show t1
-                ++ " -> "
-                ++ show t2
-                ++ " ≠ "
-                ++ show t
-            )
-    _ -> Just ("Erreur de type: Application impossible sur l'expression " ++ show e1)
+-- check tenv (Lapp e1 e2) t =
+--   case synth tenv e1 of
+--     Larw t1 t2 ->
+--       if t1 == synth tenv e2 && t2 == t
+--         then Nothing
+--         else
+--           Just
+--             ( "Erreur de type dans l'application: "
+--                 ++ show t1
+--                 ++ " -> "
+--                 ++ show t2
+--                 ++ " ≠ "
+--                 ++ show t
+--             )
+--     _ -> Just ("Erreur de type: Application impossible sur l'expression " ++ show e1)
 
-
+-- check tenv (Lapp e1 e2) t = case synth tenv e1 of
+--     Larw t1 t2 ->
+--         case synth tenv e2 of
+--             t' ->
+--                 if t' == t1 && t2 == t
+--                     then Nothing
+--                     else Just "Type mismatch in function application"
+--     _ -> Just "Invalid function type in application"
 
 -- `check` for Lfun:
-check tenv (Lfun x e) (Larw t1 t2) = check (minsert tenv x t1) e t2
+-- check tenv (Lfun x e) (Larw t1 t2) = check (minsert tenv x t1) e t2
+
+check tenv (Lfun x (Lfun y e)) t@(Larw t1 t2) =
+  check ((x, t1) : ((y, t2) : tenv)) e t2
+
+check tenv (Lfun x (Lfun y e)) t = case t of
+  Larw t1 t2 ->
+    let tenv' = minsert (minsert tenv y t1) x (Larw t1 t2)
+    in check tenv' e t2
+  _ -> Just ("Erreur de type: Attendu un type flèche dans l'expression " ++ show (Lfun x (Lfun y e)))
+
+check tenv (Lfun x e) t@(Larw t1 t2) =
+  case check ((x, t1) : tenv) e t2 of
+    Nothing -> if synth ((x, t1) : tenv) e == t then Nothing else Just "Type mismatch in function definition"
+    Just err -> Just err
+
+
+check tenv (Lfun x e) t = Just "Type mismatch in function definition"
+
+-- check tenv (Lfun x (Lfun y e)) (Larw t1 t2) =
+--   case check ((x, t1) : (y, t2) : tenv) e t2 of
+--     Just err -> Just err
+--     Nothing -> Nothing
+
+-- check tenv (Lapp e1 e2) t = case synth tenv e1 of
+--     Larw t1 t2 -> case check tenv e2 t1 of
+--         Nothing -> if t2 == t
+--             then Nothing
+--             else Just "Type mismatch in function application"
+--         Just err -> Just err
+--     _ -> Just "Invalid function type in application"
 
 check tenv (Lapp e1 e2) t = case synth tenv e1 of
-    Larw t1 t2 -> case check tenv e2 t1 of
-        Nothing -> if t2 == t
-            then Nothing
-            else Just "Type mismatch in function application"
-        Just err -> Just err
-    _ -> Just "Invalid function type in application"
+  Larw t1 t2 -> case check tenv e2 t1 of
+    Nothing -> if t2 == t then Nothing else Just "Type mismatch in function application"
+    Just err -> Just err
+  _ -> Just "Invalid function type in application"
 
-check tenv (Lfun _ _) _ = Just "Invalid function type"
+-- check tenv (Lfun _ _) _ = Just "Invalid function type"
+
+-- check tenv (Lfun x e) t = case t of
+--   Larw t1 t2 -> case check (minsert tenv x t1) e t2 of
+--     Just err -> Just err
+--     Nothing -> Nothing
+--   _ -> Just ("Erreur de type: Attendu un type flèche dans l'expression " ++ show (Lfun x e))
+
+
+
+
+
+
 -- ¡¡COMPLÉTER ICI!!
 
 -- Default case:
@@ -453,6 +506,12 @@ eval :: VEnv -> Lexp -> Value
 eval venv (Lnum n) = Vnum n
 eval venv (Lvar x) = mlookup venv x
 
+eval env (Lvar x) =
+  case mlookup env x of
+    v@(Vfun env' x' e) -> eval (minsert env x v) e  -- Recursively evaluate function definition
+    v -> v
+  
+
 -- ¡¡COMPLÉTER ICI!!
 
 -- `eval` for Lhastype:
@@ -479,6 +538,8 @@ eval venv (Llet x e1 e2) =
    in eval venv' e2
 
 -- `eval` for Lfun:
+eval env (Lfun x (Lfun y e)) = Vop (\v -> eval (minsert (minsert env x v) y v) e)
+
 eval venv (Lfun x body) = Vfun venv x body
 
 -- État de l'évaluateur.
@@ -504,13 +565,29 @@ process_decl ((tenv, venv), Nothing, res) (Ldef x e) =
 
 -- ¡¡COMPLÉTER ICI!!
 
-process_decl ((tenv, venv), Just (x', t'), res) (Ldef x e) =
+-- process_decl ((tenv, venv), Just (x', t'), res) (Ldef x e) =
+--     case check tenv e t' of
+--         Nothing ->
+--             let val = eval venv e
+--                 venv' = minsert venv x val
+--             in ((tenv, venv'), Just (x', t'), (val, t') : res)
+--         Just err -> error ("Type incorrect dans la définition de " ++ x ++ ": " ++ err)
+
+process_decl ((tenv, venv), Just (x', t'), res) (Ldef x e)
+  | x /= x' = error ("Définition inattendue pour: " ++ x)
+  | otherwise =
     case check tenv e t' of
-        Nothing ->
-            let val = eval venv e
-                venv' = minsert venv x val
-            in ((tenv, venv'), Just (x', t'), (val, t') : res)
-        Just err -> error ("Type incorrect dans la définition de " ++ x ++ ": " ++ err)
+      Nothing ->
+        let val = eval venv e
+            venv' = minsert venv x val
+        in ((tenv, venv'), Nothing, (val, t') : res)
+      Just err ->
+        error ("Type incorrect dans la définition de " ++ x ++ ": " ++ err)
+
+
+
+
+
 
 
 
